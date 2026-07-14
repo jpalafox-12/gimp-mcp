@@ -108,12 +108,35 @@ def defringe(
     if not np.any(core):
         core = solid
     mean_rgb = rgb[core].mean(axis=0)
+    core_luma = float(
+        0.299 * mean_rgb[0] + 0.587 * mean_rgb[1] + 0.114 * mean_rgb[2]
+    )
     out = rgb.copy()
+    alpha_out = alpha.copy()
     if np.any(edge):
-        # full replace fringe toward clean interior gold (removes dark bloom rim)
-        out[edge] = mean_rgb
+        edge_luma = (
+            0.299 * out[edge, 0] + 0.587 * out[edge, 1] + 0.114 * out[edge, 2]
+        )
+        # drop dark bloom rim entirely; recolor mid/bright edge to core gold
+        dark = edge_luma < core_luma * 0.72
+        edge_idx = np.where(edge)
+        dark_idx = (
+            edge_idx[0][dark],
+            edge_idx[1][dark],
+        )
+        bright_edge = (
+            edge_idx[0][~dark],
+            edge_idx[1][~dark],
+        )
+        if len(dark_idx[0]):
+            alpha_out[dark_idx] = 0
+            out[dark_idx] = 0
+        if len(bright_edge[0]):
+            out[bright_edge] = mean_rgb
+    # write alpha back if caller uses same buffer — return both via side channel
+    # store on function for cutout_layers to pick up
+    defringe.last_alpha = alpha_out  # type: ignore[attr-defined]
     return out
-
 def antialias_matte(alpha: np.ndarray, radius: float = 0.8) -> np.ndarray:
     """Very slight blur on hard matte for 1px AA only."""
     if radius <= 0:
@@ -173,7 +196,10 @@ def cutout_layers(
             matte = antialias_matte(matte, radius=aa)
 
     if defringe_on:
-        rgb = defringe(rgb, matte)
+        rgb = defringe(rgb, matte, ring=3)
+        # defringe may zero dark-rim alpha
+        if hasattr(defringe, "last_alpha"):
+            matte = np.minimum(matte, defringe.last_alpha)  # type: ignore[attr-defined]
 
     # zero rgb outside matte
     outside = matte < 4
@@ -191,7 +217,6 @@ def cutout_layers(
         "mode": mode,
         "hard": hard,
     }
-
 
 def export_layer_debug(result: dict[str, Any], prefix: Path) -> dict[str, str]:
     """Write color/matte/rgba layers for inspection."""
