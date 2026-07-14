@@ -8,6 +8,12 @@ def test_tool_functions_exist():
         "gimp_resize",
         "gimp_batch_resize",
         "gimp_export",
+        "gimp_sharpen",
+        "gimp_brightness",
+        "gimp_contrast",
+        "gimp_thumbnail",
+        "gimp_pipeline",
+        "gimp_close",
     ):
         assert hasattr(srv, name)
 

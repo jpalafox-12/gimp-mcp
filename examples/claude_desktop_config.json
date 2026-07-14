@@ -2,9 +2,11 @@
   "mcpServers": {
     "gimp-mcp": {
       "command": "gimp-mcp",
-      "args": ["serve"],
+      "args": [
+        "serve"
+      ],
       "env": {
-        "GIMP_MCP_MODE": "live"
+        "GIMP_MCP_MODE": "mock"
       }
     }
   }

@@ -13,10 +13,11 @@ from gimp_mcp.config import get_mode
 mcp = FastMCP(
     "gimp-mcp",
     instructions=(
-        "GIMP MCP server. Prefer mock mode offline (Pillow). "
-        "Live mode uses gimp-console batch when installed. "
-        "Typical flow: gimp_doctor → gimp_seed_demo / gimp_open → "
-        "gimp_resize / gimp_blur / gimp_text_overlay → gimp_export."
+        "GIMP MCP server for real image work. "
+        "Flow: gimp_doctor → gimp_open(path) → transforms → gimp_export. "
+        "Use gimp_pipeline for multi-step recipes. "
+        "Live mode uses gimp-console for scale; other filters may use Pillow assist. "
+        "Prefer absolute paths for open/export."
     ),
 )
 
@@ -53,6 +54,12 @@ def gimp_list_images() -> str:
 
 
 @mcp.tool()
+def gimp_close(image_id: str) -> str:
+    """Close an image handle from the session."""
+    return _j(get_backend().close_image(image_id))
+
+
+@mcp.tool()
 def gimp_new_image(width: int = 800, height: int = 600, color: str = "#ffffff") -> str:
     """Create a new blank image."""
     return _j(get_backend().new_image(width, height, color))
@@ -60,7 +67,7 @@ def gimp_new_image(width: int = 800, height: int = 600, color: str = "#ffffff") 
 
 @mcp.tool()
 def gimp_open(path: str) -> str:
-    """Open an image file into the session."""
+    """Open an image file into the session (absolute path preferred)."""
     return _j(get_backend().open_image(path))
 
 
@@ -72,8 +79,14 @@ def gimp_info(image_id: str) -> str:
 
 @mcp.tool()
 def gimp_resize(image_id: str, width: int, height: int) -> str:
-    """Resize image (live prefers gimp-console Script-Fu scale)."""
+    """Resize image (live prefers gimp-console scale)."""
     return _j(get_backend().resize(image_id, width, height))
+
+
+@mcp.tool()
+def gimp_thumbnail(image_id: str, max_width: int = 512, max_height: int = 512) -> str:
+    """Fit image inside box preserving aspect ratio."""
+    return _j(get_backend().thumbnail(image_id, max_width, max_height))
 
 
 @mcp.tool()
@@ -101,6 +114,12 @@ def gimp_blur(image_id: str, radius: float = 2.0) -> str:
 
 
 @mcp.tool()
+def gimp_sharpen(image_id: str, percent: float = 150.0, radius: float = 2.0) -> str:
+    """Unsharp-mask sharpen."""
+    return _j(get_backend().sharpen(image_id, percent, radius))
+
+
+@mcp.tool()
 def gimp_desaturate(image_id: str) -> str:
     """Convert to grayscale."""
     return _j(get_backend().desaturate(image_id))
@@ -113,6 +132,24 @@ def gimp_invert(image_id: str) -> str:
 
 
 @mcp.tool()
+def gimp_brightness(image_id: str, factor: float = 1.2) -> str:
+    """Adjust brightness (1.0 = unchanged, >1 brighter)."""
+    return _j(get_backend().brightness(image_id, factor))
+
+
+@mcp.tool()
+def gimp_contrast(image_id: str, factor: float = 1.2) -> str:
+    """Adjust contrast (1.0 = unchanged)."""
+    return _j(get_backend().contrast(image_id, factor))
+
+
+@mcp.tool()
+def gimp_auto_orient(image_id: str) -> str:
+    """Apply EXIF orientation."""
+    return _j(get_backend().auto_orient(image_id))
+
+
+@mcp.tool()
 def gimp_text_overlay(
     image_id: str,
     text: str,
@@ -121,8 +158,21 @@ def gimp_text_overlay(
     size: int = 32,
     color: str = "#000000",
 ) -> str:
-    """Draw text on the image."""
+    """Draw text on the image (TrueType when available)."""
     return _j(get_backend().text_overlay(image_id, text, x, y, size, color))
+
+
+@mcp.tool()
+def gimp_pipeline(image_id: str, steps_json: str) -> str:
+    """
+    Apply a multi-step recipe. steps_json is a JSON array of objects with 'op' plus params.
+    Ops: auto_orient, resize, thumbnail, crop, flip, rotate, blur, sharpen,
+    desaturate, invert, brightness, contrast, text.
+    """
+    steps = json.loads(steps_json)
+    if not isinstance(steps, list):
+        return _j({"ok": False, "error": "steps_json must be a JSON array"})
+    return _j(get_backend().pipeline(image_id, steps))
 
 
 @mcp.tool()

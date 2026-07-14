@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+from pathlib import Path
 from typing import Any, Optional
 
 import typer
@@ -23,17 +25,24 @@ TOOL_NAMES = [
     "gimp_doctor",
     "gimp_seed_demo",
     "gimp_list_images",
+    "gimp_close",
     "gimp_new_image",
     "gimp_open",
     "gimp_info",
     "gimp_resize",
+    "gimp_thumbnail",
     "gimp_crop",
     "gimp_flip",
     "gimp_rotate",
     "gimp_blur",
+    "gimp_sharpen",
     "gimp_desaturate",
     "gimp_invert",
+    "gimp_brightness",
+    "gimp_contrast",
+    "gimp_auto_orient",
     "gimp_text_overlay",
+    "gimp_pipeline",
     "gimp_export",
     "gimp_batch_resize",
 ]
@@ -111,6 +120,114 @@ def live_smoke_cmd(
     rprint("gimp-mcp live-smoke complete.")
 
 
+@app.command("process")
+def process_cmd(
+    image: str = typer.Argument(..., help="Input image path"),
+    out_dir: str = typer.Option(
+        "",
+        "--out-dir",
+        help="Output directory (default: ~/.gimp-mcp/real-run)",
+    ),
+    mode: str = typer.Option("live", "--mode", help="mock|live"),
+    max_side: int = typer.Option(1280, "--max-side", help="Thumbnail max side"),
+    watermark: str = typer.Option("gimp-mcp", "--watermark", help="Text overlay"),
+) -> None:
+    """
+    Full real-image pipeline: open → thumbnail → sharpen → contrast → watermark →
+    grayscale copy → batch thumbs. Writes multiple outputs for visual verification.
+    """
+    set_mode(mode)
+    b = get_backend()
+    src = Path(image)
+    if not src.is_file():
+        rprint({"ok": False, "error": f"file not found: {image}"})
+        raise typer.Exit(1)
+
+    dest_root = Path(out_dir) if out_dir else Path.home() / ".gimp-mcp" / "real-run"
+    dest_root.mkdir(parents=True, exist_ok=True)
+    stem = src.stem
+
+    doctor = b.doctor()
+    rprint({"doctor": doctor, "input": str(src), "out_dir": str(dest_root), "mode": get_mode()})
+
+    opened = b.open_image(str(src))
+    rprint({"open": opened})
+    if not opened.get("ok"):
+        raise typer.Exit(1)
+    iid = opened["image"]["id"]
+
+    steps: list[dict[str, Any]] = [
+        {"op": "auto_orient"},
+        {"op": "thumbnail", "max_width": max_side, "max_height": max_side},
+        {"op": "sharpen", "percent": 120, "radius": 1.5},
+        {"op": "contrast", "factor": 1.15},
+        {"op": "brightness", "factor": 1.05},
+        {
+            "op": "text",
+            "text": watermark,
+            "x": 24,
+            "y": 24,
+            "size": 36,
+            "color": "#ffffff",
+        },
+    ]
+    pipe = b.pipeline(iid, steps)
+    rprint({"pipeline": {"ok": pipe.get("ok"), "applied": pipe.get("applied"), "image": pipe.get("image")}})
+    if not pipe.get("ok"):
+        raise typer.Exit(1)
+
+    main_out = dest_root / f"{stem}_processed.png"
+    exp = b.export(iid, str(main_out))
+    rprint({"export_main": exp})
+
+    # grayscale variant
+    gray = b.desaturate(iid)
+    gray_out = dest_root / f"{stem}_gray.png"
+    rprint({"desaturate": {"ok": gray.get("ok"), "image": gray.get("image")}})
+    rprint({"export_gray": b.export(iid, str(gray_out))})
+
+    # reopen original for crop + flip showcase
+    o2 = b.open_image(str(src))
+    iid2 = o2["image"]["id"]
+    w = int(o2["image"].get("width") or 1000)
+    h = int(o2["image"].get("height") or 1000)
+    cx, cy = w // 4, h // 4
+    cw, ch = max(100, w // 2), max(100, h // 2)
+    b.crop(iid2, cx, cy, cw, ch)
+    b.flip(iid2, "horizontal")
+    b.resize(iid2, 640, 360)
+    crop_out = dest_root / f"{stem}_crop_flip_640x360.png"
+    rprint({"export_crop_flip": b.export(iid2, str(crop_out))})
+
+    # batch: copy 3 inputs into a folder and batch-resize
+    batch_in = dest_root / "batch_in"
+    batch_out = dest_root / "batch_thumbs"
+    if batch_in.exists():
+        shutil.rmtree(batch_in, ignore_errors=True)
+    batch_in.mkdir(parents=True, exist_ok=True)
+    batch_out.mkdir(parents=True, exist_ok=True)
+    # seed batch with main + a couple siblings if available
+    shutil.copy2(src, batch_in / src.name)
+    siblings = list(src.parent.glob("*.jpg"))[:3]
+    for s in siblings:
+        if s.name != src.name:
+            shutil.copy2(s, batch_in / s.name)
+    batch = b.batch_resize(str(batch_in), str(batch_out), 320, 180)
+    rprint({"batch_resize": batch})
+
+    # inventory outputs
+    outputs = sorted(str(p) for p in dest_root.rglob("*") if p.is_file())
+    rprint(
+        {
+            "ok": True,
+            "process": "complete",
+            "outputs": outputs,
+            "main": str(main_out),
+            "count": len(outputs),
+        }
+    )
+
+
 @tools_app.command("list")
 def tools_list() -> None:
     table = Table(title="gimp-mcp tools")
@@ -142,16 +259,12 @@ def call_cmd(
     name = tool if tool.startswith("gimp_") else f"gimp_{tool}"
     kv = _parse_kv(arg)
 
-    def _need(*keys: str) -> None:
-        missing = [k for k in keys if k not in kv or kv[k] in ("", None)]
-        if missing:
-            raise typer.Exit(f"missing args: {', '.join(k + '=...' for k in missing)}")
-
     dispatch = {
         "gimp_mode": lambda: switch_mode(str(kv.get("mode", get_mode()))),
         "gimp_doctor": b.doctor,
         "gimp_seed_demo": b.seed_demo,
         "gimp_list_images": b.list_images,
+        "gimp_close": lambda: b.close_image(str(kv.get("image_id", ""))),
         "gimp_new_image": lambda: b.new_image(
             int(kv.get("width", 800)), int(kv.get("height", 600)), str(kv.get("color", "#ffffff"))
         ),
@@ -160,15 +273,17 @@ def call_cmd(
         "gimp_resize": lambda: b.resize(
             str(kv.get("image_id", "")), int(kv.get("width", 256)), int(kv.get("height", 256))
         ),
-        "gimp_crop": lambda: (
-            _need("image_id", "x", "y", "width", "height")
-            or b.crop(
-                str(kv["image_id"]),
-                int(kv["x"]),
-                int(kv["y"]),
-                int(kv["width"]),
-                int(kv["height"]),
-            )
+        "gimp_thumbnail": lambda: b.thumbnail(
+            str(kv.get("image_id", "")),
+            int(kv.get("max_width", 512)),
+            int(kv.get("max_height", 512)),
+        ),
+        "gimp_crop": lambda: b.crop(
+            str(kv.get("image_id", "")),
+            int(kv.get("x", 0)),
+            int(kv.get("y", 0)),
+            int(kv.get("width", 100)),
+            int(kv.get("height", 100)),
         ),
         "gimp_flip": lambda: b.flip(
             str(kv.get("image_id", "")), str(kv.get("direction", "horizontal"))
@@ -177,8 +292,20 @@ def call_cmd(
             str(kv.get("image_id", "")), float(kv.get("degrees", 90))
         ),
         "gimp_blur": lambda: b.blur(str(kv.get("image_id", "")), float(kv.get("radius", 2.0))),
+        "gimp_sharpen": lambda: b.sharpen(
+            str(kv.get("image_id", "")),
+            float(kv.get("percent", 150)),
+            float(kv.get("radius", 2.0)),
+        ),
         "gimp_desaturate": lambda: b.desaturate(str(kv.get("image_id", ""))),
         "gimp_invert": lambda: b.invert(str(kv.get("image_id", ""))),
+        "gimp_brightness": lambda: b.brightness(
+            str(kv.get("image_id", "")), float(kv.get("factor", 1.2))
+        ),
+        "gimp_contrast": lambda: b.contrast(
+            str(kv.get("image_id", "")), float(kv.get("factor", 1.2))
+        ),
+        "gimp_auto_orient": lambda: b.auto_orient(str(kv.get("image_id", ""))),
         "gimp_text_overlay": lambda: b.text_overlay(
             str(kv.get("image_id", "")),
             str(kv.get("text", "")),
@@ -186,6 +313,10 @@ def call_cmd(
             int(kv.get("y", 10)),
             int(kv.get("size", 32)),
             str(kv.get("color", "#000000")),
+        ),
+        "gimp_pipeline": lambda: b.pipeline(
+            str(kv.get("image_id", "")),
+            json.loads(str(kv.get("steps_json", "[]"))),
         ),
         "gimp_export": lambda: b.export(
             str(kv.get("image_id", "")), str(kv.get("path", "out.png")), kv.get("format")

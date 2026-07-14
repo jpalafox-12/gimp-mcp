@@ -7,9 +7,32 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from PIL import Image, ImageDraw, ImageFilter, ImageOps
+from PIL import Image
 
+from gimp_mcp import ops
 from gimp_mcp.config import workspace_dir
+
+OPS_LIST = [
+    "new",
+    "open",
+    "resize",
+    "thumbnail",
+    "crop",
+    "flip",
+    "rotate",
+    "blur",
+    "sharpen",
+    "desaturate",
+    "invert",
+    "brightness",
+    "contrast",
+    "auto_orient",
+    "text",
+    "export",
+    "batch_resize",
+    "pipeline",
+    "close",
+]
 
 
 class MockBackend:
@@ -55,34 +78,29 @@ class MockBackend:
             "images_open": len(self._images),
             "workspace": str(self._ws),
             "message": "Mock backend active — no GIMP install needed",
-            "ops": [
-                "new",
-                "open",
-                "resize",
-                "crop",
-                "flip",
-                "rotate",
-                "blur",
-                "desaturate",
-                "invert",
-                "text",
-                "export",
-                "batch_resize",
-            ],
+            "ops": list(OPS_LIST),
         }
 
     def seed_demo(self) -> dict[str, Any]:
         self._images.clear()
         im = Image.new("RGB", (640, 360), "#1e293b")
+        from PIL import ImageDraw
+
         draw = ImageDraw.Draw(im)
         draw.rectangle((40, 40, 600, 320), outline="#38bdf8", width=4)
-        draw.text((80, 160), "gimp-mcp demo", fill="#e2e8f0")
+        im = ops.text_overlay(im, "gimp-mcp demo", 80, 160, 28, "#e2e8f0")
         iid = self._new_id()
         meta = self._save_meta(iid, im)
         return {"ok": True, "mode": "mock", "image": meta, "count": 1}
 
     def list_images(self) -> list[dict[str, Any]]:
         return [dict(v) for v in self._images.values()]
+
+    def close_image(self, image_id: str) -> dict[str, Any]:
+        if image_id not in self._images:
+            return {"ok": False, "error": f"unknown image_id={image_id}"}
+        del self._images[image_id]
+        return {"ok": True, "closed": image_id, "remaining": len(self._images)}
 
     def new_image(self, width: int, height: int, color: str = "#ffffff") -> dict[str, Any]:
         w, h = max(1, int(width)), max(1, int(height))
@@ -94,10 +112,13 @@ class MockBackend:
         p = Path(path)
         if not p.is_file():
             return {"ok": False, "error": f"file not found: {path}"}
-        im = Image.open(p).convert("RGB")
+        try:
+            im = ops.load_rgb(p)
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
         iid = self._new_id()
-        dest = self._ws / f"{iid}{p.suffix or '.png'}"
-        return {"ok": True, "image": self._save_meta(iid, im, dest)}
+        dest = self._ws / f"{iid}.png"
+        return {"ok": True, "image": self._save_meta(iid, im, dest), "original": str(p)}
 
     def info(self, image_id: str) -> dict[str, Any]:
         try:
@@ -109,64 +130,50 @@ class MockBackend:
         meta = self._get(image_id)
         return Image.open(meta["path"]).convert("RGB")
 
-    def resize(self, image_id: str, width: int, height: int) -> dict[str, Any]:
+    def _apply(self, image_id: str, fn, **kwargs: Any) -> dict[str, Any]:
         try:
-            im = self._load(image_id)
-            im = im.resize((max(1, int(width)), max(1, int(height))), Image.Resampling.LANCZOS)
+            im = fn(self._load(image_id), **kwargs) if kwargs else fn(self._load(image_id))
             return {"ok": True, "image": self._save_meta(image_id, im)}
         except KeyError as e:
             return {"ok": False, "error": str(e)}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def resize(self, image_id: str, width: int, height: int) -> dict[str, Any]:
+        return self._apply(image_id, ops.resize, width=width, height=height)
+
+    def thumbnail(self, image_id: str, max_width: int = 512, max_height: int = 512) -> dict[str, Any]:
+        return self._apply(image_id, ops.thumbnail, max_width=max_width, max_height=max_height)
 
     def crop(self, image_id: str, x: int, y: int, width: int, height: int) -> dict[str, Any]:
-        try:
-            im = self._load(image_id)
-            box = (int(x), int(y), int(x) + max(1, int(width)), int(y) + max(1, int(height)))
-            im = im.crop(box)
-            return {"ok": True, "image": self._save_meta(image_id, im)}
-        except KeyError as e:
-            return {"ok": False, "error": str(e)}
+        return self._apply(image_id, ops.crop, x=x, y=y, width=width, height=height)
 
     def flip(self, image_id: str, direction: str = "horizontal") -> dict[str, Any]:
-        try:
-            im = self._load(image_id)
-            d = direction.lower()
-            if d in ("vertical", "v"):
-                im = ImageOps.flip(im)
-            else:
-                im = ImageOps.mirror(im)
-            return {"ok": True, "image": self._save_meta(image_id, im)}
-        except KeyError as e:
-            return {"ok": False, "error": str(e)}
+        return self._apply(image_id, ops.flip, direction=direction)
 
     def rotate(self, image_id: str, degrees: float = 90) -> dict[str, Any]:
-        try:
-            im = self._load(image_id)
-            im = im.rotate(-float(degrees), expand=True, fillcolor="#000000")
-            return {"ok": True, "image": self._save_meta(image_id, im)}
-        except KeyError as e:
-            return {"ok": False, "error": str(e)}
+        return self._apply(image_id, ops.rotate, degrees=degrees)
 
     def blur(self, image_id: str, radius: float = 2.0) -> dict[str, Any]:
-        try:
-            im = self._load(image_id)
-            im = im.filter(ImageFilter.GaussianBlur(radius=max(0.0, float(radius))))
-            return {"ok": True, "image": self._save_meta(image_id, im)}
-        except KeyError as e:
-            return {"ok": False, "error": str(e)}
+        return self._apply(image_id, ops.blur, radius=radius)
+
+    def sharpen(self, image_id: str, percent: float = 150.0, radius: float = 2.0) -> dict[str, Any]:
+        return self._apply(image_id, ops.sharpen, percent=percent, radius=radius)
 
     def desaturate(self, image_id: str) -> dict[str, Any]:
-        try:
-            im = ImageOps.grayscale(self._load(image_id)).convert("RGB")
-            return {"ok": True, "image": self._save_meta(image_id, im)}
-        except KeyError as e:
-            return {"ok": False, "error": str(e)}
+        return self._apply(image_id, ops.desaturate)
 
     def invert(self, image_id: str) -> dict[str, Any]:
-        try:
-            im = ImageOps.invert(self._load(image_id))
-            return {"ok": True, "image": self._save_meta(image_id, im)}
-        except KeyError as e:
-            return {"ok": False, "error": str(e)}
+        return self._apply(image_id, ops.invert)
+
+    def brightness(self, image_id: str, factor: float = 1.2) -> dict[str, Any]:
+        return self._apply(image_id, ops.brightness, factor=factor)
+
+    def contrast(self, image_id: str, factor: float = 1.2) -> dict[str, Any]:
+        return self._apply(image_id, ops.contrast, factor=factor)
+
+    def auto_orient(self, image_id: str) -> dict[str, Any]:
+        return self._apply(image_id, ops.auto_orient)
 
     def text_overlay(
         self,
@@ -177,25 +184,30 @@ class MockBackend:
         size: int = 32,
         color: str = "#000000",
     ) -> dict[str, Any]:
+        r = self._apply(
+            image_id, ops.text_overlay, text=text, x=x, y=y, size=size, color=color
+        )
+        if r.get("ok"):
+            r["text"] = text
+            r["size"] = size
+        return r
+
+    def pipeline(self, image_id: str, steps: list[dict[str, Any]]) -> dict[str, Any]:
         try:
             im = self._load(image_id)
-            draw = ImageDraw.Draw(im)
-            # default font; size is approximate for default bitmap font
-            draw.text((int(x), int(y)), str(text), fill=color)
-            return {"ok": True, "image": self._save_meta(image_id, im), "text": text, "size": size}
+            im, applied = ops.apply_pipeline(im, steps)
+            meta = self._save_meta(image_id, im)
+            return {"ok": True, "image": meta, "applied": applied}
         except KeyError as e:
+            return {"ok": False, "error": str(e)}
+        except Exception as e:
             return {"ok": False, "error": str(e)}
 
     def export(self, image_id: str, path: str, format: str | None = None) -> dict[str, Any]:
         try:
             im = self._load(image_id)
-            out = Path(path)
-            out.parent.mkdir(parents=True, exist_ok=True)
-            fmt = (format or out.suffix.lstrip(".") or "png").upper()
-            if fmt == "JPG":
-                fmt = "JPEG"
-            im.save(out, format=fmt)
-            return {"ok": True, "path": str(out), "format": fmt, "image_id": image_id}
+            info = ops.export(im, path, format)
+            return {"ok": True, "image_id": image_id, **info}
         except KeyError as e:
             return {"ok": False, "error": str(e)}
         except OSError as e:
@@ -212,9 +224,9 @@ class MockBackend:
         for p in sorted(inp.iterdir()):
             if p.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}:
                 continue
-            im = Image.open(p).convert("RGB")
-            im = im.resize((max(1, int(width)), max(1, int(height))), Image.Resampling.LANCZOS)
-            dest = outp / p.name
+            im = ops.load_rgb(p)
+            im = ops.resize(im, width, height)
+            dest = outp / (p.stem + ".png")
             im.save(dest)
             done.append(str(dest))
         return {"ok": True, "count": len(done), "files": done, "width": width, "height": height}

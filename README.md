@@ -2,6 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![Version](https://img.shields.io/badge/version-0.1.1-0E8A16.svg)](pyproject.toml)
+[![MCP](https://img.shields.io/badge/MCP-Model%20Context%20Protocol-5319E7.svg)](https://modelcontextprotocol.io)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![MergeOS](https://img.shields.io/badge/MergeOS-bounties-5319E7.svg)](https://github.com/mergeos-bounties)
 
@@ -16,17 +17,15 @@
 
 ---
 
-## Install for Grok (one command)
+## Install (one command)
+
+### Grok — recommended
 
 ```bash
-grok plugin install mergeos-bounties/gimp-mcp --trust
+pip install "git+https://github.com/mergeos-bounties/gimp-mcp.git" && grok plugin install mergeos-bounties/gimp-mcp --trust
 ```
 
-That installs the **skill** + **MCP server config** from this repo. Then install the Python package so `gimp-mcp serve` is on PATH:
-
-```bash
-pip install "git+https://github.com/mergeos-bounties/gimp-mcp.git"
-```
+This installs the **Python CLI** (`gimp-mcp`) and the **Grok plugin** (skill + MCP server from `.mcp.json`).
 
 Check:
 
@@ -34,19 +33,69 @@ Check:
 gimp-mcp version
 gimp-mcp doctor
 gimp-mcp demo
-# with GIMP 3.x installed:
-gimp-mcp live-smoke
+grok plugin list
+grok mcp list
 ```
 
-Local plugin validate (from a clone):
+Local clone:
 
 ```bash
-grok plugin validate .
+git clone https://github.com/mergeos-bounties/gimp-mcp.git
+cd gimp-mcp
+pip install -e ".[dev]"
 grok plugin install . --trust
 ```
 
----
+### Other agents (stdio MCP)
 
+After `pip install "git+https://github.com/mergeos-bounties/gimp-mcp.git"`, point any MCP host at:
+
+| Field | Value |
+| --- | --- |
+| command | `gimp-mcp` |
+| args | `["serve"]` |
+| env | `GIMP_MCP_MODE=mock` |
+
+**Claude Desktop** — merge [examples/claude_desktop_config.json](examples/claude_desktop_config.json) into Claude MCP config.
+
+**Cursor** — merge [examples/cursor_mcp.json](examples/cursor_mcp.json).
+
+**Grok config.toml** (manual, without plugin):
+
+```toml
+[mcp_servers.gimp_mcp]
+command = "gimp-mcp"
+args = ["serve"]
+env = { GIMP_MCP_MODE = "mock" }
+enabled = true
+```
+
+**One-liner via Grok CLI:**
+
+```bash
+pip install "git+https://github.com/mergeos-bounties/gimp-mcp.git"
+grok mcp add gimp-mcp -- gimp-mcp serve
+```
+
+
+## Supported AI agents / hosts
+
+| Host | Support | Install |
+| --- | --- | --- |
+| **Grok** (CLI / TUI / Build) | **Yes** | `grok plugin install mergeos-bounties/gimp-mcp --trust` then `pip install "git+https://github.com/mergeos-bounties/gimp-mcp.git"` |
+| **Claude Desktop** | **Yes** | Copy [examples/claude_desktop_config.json](examples/claude_desktop_config.json) into Claude MCP settings |
+| **Cursor** | **Yes** | Merge [examples/cursor_mcp.json](examples/cursor_mcp.json) into Cursor MCP config |
+| **Claude Code** | **Yes** | stdio MCP: same `command`/`args` as Claude Desktop / Grok |
+| **VS Code** (MCP / Continue / Cline) | **Yes** | Generic stdio server config pointing at `gimp-mcp serve` |
+| **Windsurf / Cascade** | **Yes** | stdio MCP entry with `gimp-mcp` + `serve` |
+| **Codex CLI** | **Yes** (stdio) | Register MCP server command `gimp-mcp serve` in Codex MCP settings |
+| **ChatGPT Desktop** | **Partial** | Only if host supports custom MCP stdio servers |
+| **Gemini CLI** | **Partial** | Only if MCP stdio plugins are enabled |
+
+All packages speak **MCP over stdio** (`gimp-mcp serve`). Default mode is **mock** (offline, no simulator/terminal/GIMP required).
+
+
+---
 ## Highlights
 
 | Capability | Description |

@@ -156,6 +156,27 @@ class LiveBackend:
             "images_open": len(self._images),
             "workspace": str(self._ws),
             "batch": batch,
+            "ops": [
+                "new",
+                "open",
+                "resize",
+                "thumbnail",
+                "crop",
+                "flip",
+                "rotate",
+                "blur",
+                "sharpen",
+                "desaturate",
+                "invert",
+                "brightness",
+                "contrast",
+                "auto_orient",
+                "text",
+                "export",
+                "batch_resize",
+                "pipeline",
+                "close",
+            ],
         }
 
     def seed_demo(self) -> dict[str, Any]:
@@ -324,25 +345,25 @@ class LiveBackend:
         return {"ok": True, "image": meta, "note": "created on disk; transforms use gimp-console"}
 
     def open_image(self, path: str) -> dict[str, Any]:
+        from gimp_mcp import ops
+
         p = Path(path)
         if not p.is_file():
             return {"ok": False, "error": f"file not found: {path}"}
         iid = self._id()
-        dest = self._ws / f"{iid}{p.suffix or '.png'}"
-        shutil.copy2(p, dest)
-        w = h = None
+        dest = self._ws / f"{iid}.png"
         try:
-            from PIL import Image
-
-            with Image.open(dest) as im:
-                w, h = im.size
-        except Exception:
-            pass
+            im = ops.load_rgb(p)
+            im.save(dest)
+            w, h = im.size
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
         meta = {
             "id": iid,
             "path": str(dest),
             "width": w,
             "height": h,
+            "mode": "RGB",
             "source": "live-open",
             "original": str(p),
         }
@@ -354,12 +375,28 @@ class LiveBackend:
             return {"ok": False, "error": f"unknown image_id={image_id}"}
         return {"ok": True, "image": dict(self._images[image_id]), "doctor": self.doctor()}
 
+    def close_image(self, image_id: str) -> dict[str, Any]:
+        if image_id not in self._images:
+            return {"ok": False, "error": f"unknown image_id={image_id}"}
+        del self._images[image_id]
+        return {"ok": True, "closed": image_id, "remaining": len(self._images)}
+
     def _path(self, image_id: str) -> Path:
         if image_id not in self._images:
             raise KeyError(image_id)
         return Path(self._images[image_id]["path"])
 
+    def _store(self, image_id: str, im: Any, tag: str) -> dict[str, Any]:
+        out = self._ws / f"{image_id}_{tag}.png"
+        im.save(out)
+        self._images[image_id].update(
+            {"path": str(out), "width": im.width, "height": im.height, "mode": im.mode}
+        )
+        return dict(self._images[image_id])
+
     def resize(self, image_id: str, width: int, height: int) -> dict[str, Any]:
+        from gimp_mcp import ops
+
         try:
             src = self._path(image_id)
         except KeyError:
@@ -373,10 +410,8 @@ class LiveBackend:
         result = self._scale_with_gimp(src, out, width, height)
         if not result.get("ok") or not out.is_file():
             try:
-                from PIL import Image
-
-                im = Image.open(src).convert("RGB")
-                im = im.resize((max(1, int(width)), max(1, int(height))), Image.Resampling.LANCZOS)
+                im = ops.load_rgb(src)
+                im = ops.resize(im, width, height)
                 im.save(out)
                 result["ok"] = True
                 result["fallback"] = "pillow"
@@ -387,22 +422,11 @@ class LiveBackend:
         self._images[image_id]["height"] = int(height)
         return {"ok": True, "image": dict(self._images[image_id]), "gimp": result}
 
-    def crop(self, image_id: str, x: int, y: int, width: int, height: int) -> dict[str, Any]:
-        try:
-            from PIL import Image
+    def thumbnail(self, image_id: str, max_width: int = 512, max_height: int = 512) -> dict[str, Any]:
+        return self._pillow_op(image_id, "thumbnail", max_width=max_width, max_height=max_height)
 
-            src = self._path(image_id)
-            im = Image.open(src).convert("RGB")
-            box = (int(x), int(y), int(x) + max(1, int(width)), int(y) + max(1, int(height)))
-            im = im.crop(box)
-            out = self._ws / f"{image_id}_crop.png"
-            im.save(out)
-            self._images[image_id].update(
-                {"path": str(out), "width": im.width, "height": im.height}
-            )
-            return {"ok": True, "image": dict(self._images[image_id]), "engine": "pillow-assist"}
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
+    def crop(self, image_id: str, x: int, y: int, width: int, height: int) -> dict[str, Any]:
+        return self._pillow_op(image_id, "crop", x=x, y=y, width=width, height=height)
 
     def flip(self, image_id: str, direction: str = "horizontal") -> dict[str, Any]:
         return self._pillow_op(image_id, "flip", direction=direction)
@@ -413,11 +437,23 @@ class LiveBackend:
     def blur(self, image_id: str, radius: float = 2.0) -> dict[str, Any]:
         return self._pillow_op(image_id, "blur", radius=radius)
 
+    def sharpen(self, image_id: str, percent: float = 150.0, radius: float = 2.0) -> dict[str, Any]:
+        return self._pillow_op(image_id, "sharpen", percent=percent, radius=radius)
+
     def desaturate(self, image_id: str) -> dict[str, Any]:
         return self._pillow_op(image_id, "desaturate")
 
     def invert(self, image_id: str) -> dict[str, Any]:
         return self._pillow_op(image_id, "invert")
+
+    def brightness(self, image_id: str, factor: float = 1.2) -> dict[str, Any]:
+        return self._pillow_op(image_id, "brightness", factor=factor)
+
+    def contrast(self, image_id: str, factor: float = 1.2) -> dict[str, Any]:
+        return self._pillow_op(image_id, "contrast", factor=factor)
+
+    def auto_orient(self, image_id: str) -> dict[str, Any]:
+        return self._pillow_op(image_id, "auto_orient")
 
     def text_overlay(
         self,
@@ -430,54 +466,89 @@ class LiveBackend:
     ) -> dict[str, Any]:
         return self._pillow_op(image_id, "text", text=text, x=x, y=y, size=size, color=color)
 
-    def _pillow_op(self, image_id: str, op: str, **kwargs: Any) -> dict[str, Any]:
-        """Pillow assist for filters when full PDB batch is not needed."""
-        try:
-            from PIL import Image, ImageDraw, ImageFilter, ImageOps
+    def pipeline(self, image_id: str, steps: list[dict[str, Any]]) -> dict[str, Any]:
+        from gimp_mcp import ops
 
-            src = self._path(image_id)
-            im = Image.open(src).convert("RGB")
+        try:
+            im = ops.load_rgb(self._path(image_id))
+            im, applied = ops.apply_pipeline(im, steps)
+            meta = self._store(image_id, im, "pipeline")
+            return {"ok": True, "image": meta, "applied": applied, "engine": "pillow-assist"}
+        except KeyError:
+            return {"ok": False, "error": f"unknown image_id={image_id}"}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def _pillow_op(self, image_id: str, op: str, **kwargs: Any) -> dict[str, Any]:
+        """Pillow assist for filters; resize still prefers gimp-console."""
+        from gimp_mcp import ops
+
+        try:
+            im = ops.load_rgb(self._path(image_id))
             if op == "flip":
-                d = str(kwargs.get("direction", "horizontal")).lower()
-                im = ImageOps.flip(im) if d in ("vertical", "v") else ImageOps.mirror(im)
+                im = ops.flip(im, str(kwargs.get("direction", "horizontal")))
             elif op == "rotate":
-                im = im.rotate(-float(kwargs.get("degrees", 90)), expand=True, fillcolor="#000000")
+                im = ops.rotate(im, float(kwargs.get("degrees", 90)))
             elif op == "blur":
-                im = im.filter(ImageFilter.GaussianBlur(radius=float(kwargs.get("radius", 2))))
-            elif op == "desaturate":
-                im = ImageOps.grayscale(im).convert("RGB")
-            elif op == "invert":
-                im = ImageOps.invert(im)
-            elif op == "text":
-                draw = ImageDraw.Draw(im)
-                draw.text(
-                    (int(kwargs.get("x", 10)), int(kwargs.get("y", 10))),
-                    str(kwargs.get("text", "")),
-                    fill=str(kwargs.get("color", "#000000")),
+                im = ops.blur(im, float(kwargs.get("radius", 2)))
+            elif op == "sharpen":
+                im = ops.sharpen(
+                    im, float(kwargs.get("percent", 150)), float(kwargs.get("radius", 2))
                 )
-            out = self._ws / f"{image_id}_{op}.png"
-            im.save(out)
-            self._images[image_id].update(
-                {"path": str(out), "width": im.width, "height": im.height}
-            )
+            elif op == "desaturate":
+                im = ops.desaturate(im)
+            elif op == "invert":
+                im = ops.invert(im)
+            elif op == "brightness":
+                im = ops.brightness(im, float(kwargs.get("factor", 1.2)))
+            elif op == "contrast":
+                im = ops.contrast(im, float(kwargs.get("factor", 1.2)))
+            elif op == "auto_orient":
+                im = ops.auto_orient(im)
+            elif op == "thumbnail":
+                im = ops.thumbnail(
+                    im, int(kwargs.get("max_width", 512)), int(kwargs.get("max_height", 512))
+                )
+            elif op == "crop":
+                im = ops.crop(
+                    im,
+                    int(kwargs["x"]),
+                    int(kwargs["y"]),
+                    int(kwargs["width"]),
+                    int(kwargs["height"]),
+                )
+            elif op == "text":
+                im = ops.text_overlay(
+                    im,
+                    str(kwargs.get("text", "")),
+                    int(kwargs.get("x", 10)),
+                    int(kwargs.get("y", 10)),
+                    int(kwargs.get("size", 32)),
+                    str(kwargs.get("color", "#000000")),
+                )
+            else:
+                return {"ok": False, "error": f"unknown op {op}"}
+            meta = self._store(image_id, im, op)
             d = self.doctor()
             return {
                 "ok": True,
-                "image": dict(self._images[image_id]),
+                "image": meta,
                 "engine": "pillow-assist",
                 "gimp_available": d.get("ok"),
-                "note": "Filter via Pillow assist; resize uses gimp-console when available",
+                "op": op,
             }
+        except KeyError:
+            return {"ok": False, "error": f"unknown image_id={image_id}"}
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
     def export(self, image_id: str, path: str, format: str | None = None) -> dict[str, Any]:
+        from gimp_mcp import ops
+
         try:
-            src = self._path(image_id)
-            dest = Path(path)
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dest)
-            return {"ok": True, "path": str(dest), "image_id": image_id, "format": format}
+            im = ops.load_rgb(self._path(image_id))
+            info = ops.export(im, path, format)
+            return {"ok": True, "image_id": image_id, **info}
         except KeyError:
             return {"ok": False, "error": f"unknown image_id={image_id}"}
         except OSError as e:
@@ -487,6 +558,8 @@ class LiveBackend:
         self, input_dir: str, output_dir: str, width: int, height: int
     ) -> dict[str, Any]:
         """Batch resize via GIMP when possible, else Pillow."""
+        from gimp_mcp import ops
+
         inp, outp = Path(input_dir), Path(output_dir)
         if not inp.is_dir():
             return {"ok": False, "error": f"input_dir not found: {input_dir}"}
@@ -494,14 +567,13 @@ class LiveBackend:
         files = [
             p
             for p in sorted(inp.iterdir())
-            if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+            if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
         ]
         done: list[str] = []
         engines: list[str] = []
         gimp_ok = bool(self.doctor().get("ok"))
         for p in files:
             dest = outp / (p.stem + ".png")
-            used = "pillow"
             if gimp_ok:
                 r = self._scale_with_gimp(p, dest, width, height)
                 if r.get("ok") and dest.is_file():
@@ -509,13 +581,11 @@ class LiveBackend:
                     engines.append(str(r.get("engine") or "gimp"))
                     continue
             try:
-                from PIL import Image
-
-                im = Image.open(p).convert("RGB")
-                im = im.resize((max(1, int(width)), max(1, int(height))), Image.Resampling.LANCZOS)
+                im = ops.load_rgb(p)
+                im = ops.resize(im, width, height)
                 im.save(dest)
                 done.append(str(dest))
-                engines.append(used)
+                engines.append("pillow")
             except Exception:
                 continue
         return {
@@ -527,3 +597,4 @@ class LiveBackend:
             "height": height,
             "gimp_console": discover_gimp_console(),
         }
+

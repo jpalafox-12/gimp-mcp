@@ -1,7 +1,7 @@
 {
   "name": "gimp-mcp",
-  "version": "0.1.1",
-  "description": "GIMP image ops for Grok: MCP server + skill (mock Pillow or live gimp-console). Install with one command from GitHub.",
+  "version": "0.2.0",
+  "description": "GIMP image ops (Pillow mock + gimp-console live). One-command install from GitHub for Grok + MCP hosts.",
   "author": {
     "name": "MergeOS / ThanhTrucSolutions",
     "url": "https://github.com/mergeos-bounties"
@@ -9,5 +9,11 @@
   "homepage": "https://github.com/mergeos-bounties/gimp-mcp",
   "repository": "https://github.com/mergeos-bounties/gimp-mcp",
   "license": "MIT",
-  "keywords": ["gimp", "mcp", "image", "pillow", "batch", "mergeos"]
+  "keywords": [
+    "gimp",
+    "image",
+    "mcp",
+    "pillow",
+    "mergeos"
+  ]
 }
