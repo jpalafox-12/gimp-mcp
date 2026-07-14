@@ -79,24 +79,40 @@ def defringe(
     edge_lo: float = 20.0,
     edge_hi: float = 250.0,
     core_thr: float = 200.0,
+    ring: int = 2,
 ) -> np.ndarray:
     """
-    Color decontamination on matte edge:
-    replace fringe RGB with mean of solid interior gold (core).
+    Color decontamination on matte edge.
+    For hard (binary) mattes, edge = matte minus eroded matte (morphological ring).
+    For soft mattes, also use partial-alpha band.
     """
-    core = alpha >= core_thr
-    if not np.any(core):
+    solid = alpha >= core_thr
+    if not np.any(solid):
+        solid = alpha > 128
+    if not np.any(solid):
         return rgb
-    mean_rgb = rgb[core].mean(axis=0)
-    edge = (alpha > edge_lo) & (alpha < edge_hi)
-    out = rgb.copy()
-    # blend fringe toward core color proportional to how soft the alpha is
-    if np.any(edge):
-        t = 1.0 - (alpha[edge] - edge_lo) / max(edge_hi - edge_lo, 1.0)
-        t = np.clip(t, 0.0, 1.0)[..., None]
-        out[edge] = out[edge] * (1.0 - t) + mean_rgb * t
-    return out
 
+    # morphological interior (erode) via MinFilter
+    a_im = Image.fromarray(np.clip(alpha, 0, 255).astype(np.uint8), "L")
+    eroded = a_im
+    for _ in range(max(1, int(ring))):
+        eroded = eroded.filter(ImageFilter.MinFilter(3))
+    eroded_a = np.array(eroded, dtype=np.float32)
+    # edge ring of hard matte
+    edge = (alpha >= 128) & (eroded_a < 128)
+    # also soft partial band if present
+    soft_edge = (alpha > edge_lo) & (alpha < edge_hi)
+    edge = edge | soft_edge
+
+    core = eroded_a >= core_thr
+    if not np.any(core):
+        core = solid
+    mean_rgb = rgb[core].mean(axis=0)
+    out = rgb.copy()
+    if np.any(edge):
+        # full replace fringe toward clean interior gold (removes dark bloom rim)
+        out[edge] = mean_rgb
+    return out
 
 def antialias_matte(alpha: np.ndarray, radius: float = 0.8) -> np.ndarray:
     """Very slight blur on hard matte for 1px AA only."""
