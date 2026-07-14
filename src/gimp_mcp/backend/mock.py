@@ -34,6 +34,7 @@ OPS_LIST = [
     "erase_rect",
     "fill_rect",
     "remove_background",
+    "cutout",
     "trim",
     "pad",
     "border",
@@ -259,6 +260,15 @@ class MockBackend:
         return self._apply(
             image_id, ops.remove_background, mode=mode, threshold=threshold, soft=soft
         )
+
+    def cutout(
+        self,
+        image_id: str,
+        thr: float = 40.0,
+        hard: bool = True,
+        defringe: bool = True,
+    ) -> dict[str, Any]:
+        return self._apply(image_id, ops.cutout, thr=thr, hard=hard, defringe=defringe)
 
     def trim(
         self,

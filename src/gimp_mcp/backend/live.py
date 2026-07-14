@@ -535,6 +535,15 @@ class LiveBackend:
             image_id, "remove_background", mode=mode, threshold=threshold, soft=soft
         )
 
+    def cutout(
+        self,
+        image_id: str,
+        thr: float = 40.0,
+        hard: bool = True,
+        defringe: bool = True,
+    ) -> dict[str, Any]:
+        return self._pillow_op(image_id, "cutout", thr=thr, hard=hard, defringe=defringe)
+
     def trim(
         self,
         image_id: str,

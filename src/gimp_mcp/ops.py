@@ -221,13 +221,28 @@ def remove_background(
 ) -> Image.Image:
     """
     Make near-black (or near-white) pixels transparent.
-    mode: black | white
+    mode: black | white | layer (layered hard matte + defringe)
     """
     rgba = ensure_rgba(im)
+    m = str(mode).lower()
+    if m in ("layer", "layers", "matte", "hard"):
+        from gimp_mcp.layers import cutout_layers
+
+        return cutout_layers(
+            rgba,
+            mode="gold" if m != "luma" else "luma",
+            thr=float(threshold),
+            soft=max(1.0, float(soft) * 0.25),
+            hard=True,
+            hard_thr=90.0,
+            defringe_on=True,
+            aa=0.55,
+            unpremult=True,
+        )["rgba"]
+
     arr = np.array(rgba).astype(np.float32)
     r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
-    if str(mode).lower() in ("white", "w"):
-        # distance from white
+    if m in ("white", "w"):
         presence = 255.0 - np.maximum(np.maximum(r, g), b)
     else:
         presence = np.maximum(np.maximum(r, g), b)
@@ -239,6 +254,27 @@ def remove_background(
     arr[low, 0:3] = 0
     return Image.fromarray(arr.astype(np.uint8), "RGBA")
 
+
+def cutout(
+    im: Image.Image,
+    thr: float = 40.0,
+    hard: bool = True,
+    defringe: bool = True,
+) -> Image.Image:
+    """Layered cutout: color + matte + defringe (best for logos on black)."""
+    from gimp_mcp.layers import cutout_layers
+
+    return cutout_layers(
+        ensure_rgba(im),
+        mode="gold",
+        thr=float(thr),
+        soft=6.0,
+        hard=bool(hard),
+        hard_thr=90.0,
+        defringe_on=bool(defringe),
+        aa=0.55 if hard else 0.0,
+        unpremult=True,
+    )["rgba"]
 
 def trim(
     im: Image.Image,
@@ -384,6 +420,12 @@ PIPELINE_OPS = {
         str(kw.get("mode", "black")),
         int(kw.get("threshold", 28)),
         int(kw.get("soft", 40)),
+    ),
+    "cutout": lambda im, **kw: cutout(
+        im,
+        float(kw.get("thr", 40)),
+        bool(kw.get("hard", True)),
+        bool(kw.get("defringe", True)),
     ),
     "trim": lambda im, **kw: trim(
         im,

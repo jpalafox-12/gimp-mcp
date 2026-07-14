@@ -47,6 +47,7 @@ TOOL_NAMES = [
     "gimp_erase_rect",
     "gimp_fill_rect",
     "gimp_remove_background",
+    "gimp_cutout",
     "gimp_trim",
     "gimp_pad",
     "gimp_border",
@@ -421,6 +422,12 @@ def call_cmd(
             str(kv.get("mode", "black")),
             int(kv.get("threshold", 28)),
             int(kv.get("soft", 40)),
+        ),
+        "gimp_cutout": lambda: b.cutout(
+            str(kv.get("image_id", "")),
+            float(kv.get("thr", 40)),
+            bool(kv.get("hard", True)),
+            bool(kv.get("defringe", True)),
         ),
         "gimp_trim": lambda: b.trim(
             str(kv.get("image_id", "")),

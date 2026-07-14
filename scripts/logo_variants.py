@@ -111,51 +111,61 @@ def trim_rgba(im: Image.Image, pad: int = 12, ath: int = 12) -> Image.Image:
     )
 
 
-def extract_emblem_soft(src: Path, keep_bottom: int = 712) -> Image.Image:
+def extract_emblem_layered(
+    src: Path,
+    keep_bottom: int = 712,
+    *,
+    hard: bool = True,
+    thr: float = 34.0,
+    aa: float = 0.0,
+    hard_thr: float = 70.0,
+    dilate: int = 1,
+    erode: int = 0,
+    debug_dir: Path | None = None,
+) -> Image.Image:
     """
-    Soft black-key only. Preserves original gold highlights / flat metal look.
-    Does NOT crush speculars or force hard fringe kill.
+    Layer pipeline:
+      color (unpremult) + matte (hard) + defringe → clean RGBA, no soft bloom.
     """
+    try:
+        from gimp_mcp.layers import cutout_layers, export_layer_debug
+    except ImportError:
+        sys.path.insert(0, str(ROOT / "src"))
+        from gimp_mcp.layers import cutout_layers, export_layer_debug
+
     raw = Image.open(src).convert("RGBA")
     im = raw.crop((0, 0, raw.width, min(keep_bottom, raw.height)))
-    arr = np.array(im).astype(np.float32)
-    r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
-    presence = np.maximum(np.maximum(r, g), b)
-    # soft alpha: only pure/near black → transparent
-    # keep almost all gold including soft edges of metal
-    thr, soft = 18.0, 28.0
-    alpha = np.clip((presence - thr) / soft, 0.0, 1.0)
-    # slight gold preference but mild
-    goldish = np.clip((r * 0.5 + g * 0.45 - b * 0.35) / 120.0, 0.0, 1.0)
-    alpha = alpha * (0.55 + 0.45 * goldish)
-    arr[:, :, 3] = np.minimum(arr[:, :, 3], alpha * 255.0)
-    # only clear fully empty
-    low = arr[:, :, 3] < 4
-    arr[low, 0:3] = 0
-    out = Image.fromarray(arr.astype(np.uint8), "RGBA")
-    return trim_rgba(out, pad=8, ath=8)
+    result = cutout_layers(
+        im,
+        mode="gold",
+        thr=thr,
+        soft=4.0,
+        hard=hard,
+        hard_thr=hard_thr,
+        erode=erode,
+        dilate=dilate,
+        defringe_on=True,
+        aa=aa,
+        unpremult=True,
+    )
+    if debug_dir is not None:
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        export_layer_debug(result, debug_dir / "emblem")
+    return trim_rgba(result["rgba"], pad=8, ath=10)
+
+
+def extract_emblem_soft(src: Path, keep_bottom: int = 712) -> Image.Image:
+    """Flat: binary matte, no AA (prevents white-bg haze)."""
+    return extract_emblem_layered(
+        src, keep_bottom, hard=True, thr=34.0, aa=0.0, hard_thr=70.0, dilate=1
+    )
 
 
 def extract_emblem_clean(src: Path, keep_bottom: int = 712) -> Image.Image:
-    """Stronger key for gradient/3D composites (optional)."""
-    raw = Image.open(src).convert("RGBA")
-    im = raw.crop((0, 0, raw.width, min(keep_bottom, raw.height)))
-    arr = np.array(im).astype(np.float32)
-    r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
-    presence = np.maximum(np.maximum(r, g), b)
-    thr, soft = 28.0, 24.0
-    alpha = np.clip((presence - thr) / soft, 0.0, 1.0)
-    goldish = np.clip((r + g - b * 1.1) / 200.0, 0.0, 1.0)
-    alpha = alpha * (0.4 + 0.6 * goldish)
-    arr[:, :, 3] = np.minimum(arr[:, :, 3], alpha * 255.0)
-    # only kill ultra-soft outer bloom, not body highlights
-    fringe = (arr[:, :, 3] > 0) & (arr[:, :, 3] < 35) & (presence < 90)
-    arr[fringe, 3] = 0
-    low = arr[:, :, 3] < 5
-    arr[low, 0:3] = 0
-    out = Image.fromarray(arr.astype(np.uint8), "RGBA")
-    return trim_rgba(out, pad=10, ath=10)
-
+    """Gradient/twist: hard matte + tiny AA."""
+    return extract_emblem_layered(
+        src, keep_bottom, hard=True, thr=36.0, aa=0.35, hard_thr=75.0, dilate=1
+    )
 
 def gold_gradient(size: tuple[int, int], style: str = "vertical") -> Image.Image:
     w, h = size
@@ -274,13 +284,26 @@ def mask_to_twist_depth(mask: Image.Image) -> Image.Image:
     return trim_rgba(canvas, pad=4)
 
 
-def compose(emblem: Image.Image, text_im: Image.Image, gap: int = 32) -> Image.Image:
+def compose(
+    emblem: Image.Image,
+    text_im: Image.Image,
+    gap: int = 32,
+    *,
+    crisp: bool = False,
+) -> Image.Image:
     target_w = int(emblem.width * 1.0)
     if text_im.width != target_w:
         ratio = target_w / max(text_im.width, 1)
+        # NEAREST for flat = no semi-transparent fringe from LANCZOS
+        resample = Image.Resampling.NEAREST if crisp else Image.Resampling.LANCZOS
         text_im = text_im.resize(
-            (target_w, max(1, int(text_im.height * ratio))), Image.Resampling.LANCZOS
+            (target_w, max(1, int(text_im.height * ratio))), resample
         )
+        if crisp:
+            # re-binarize alpha after nearest scale
+            arr = np.array(text_im)
+            arr[:, :, 3] = np.where(arr[:, :, 3] > 128, 255, 0).astype(np.uint8)
+            text_im = Image.fromarray(arr, "RGBA")
     width = max(emblem.width, text_im.width) + 32
     height = emblem.height + gap + text_im.height + 32
     canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
@@ -324,14 +347,13 @@ def build_one(
     mask = render_two_line_mask(font, gap=max(6, fsize // 7))
 
     if style == "flat":
-        emb, txt = emblem, mask_to_flat(mask)  # keep original metal
+        emb, txt = emblem, mask_to_flat(mask)  # original metal + solid flat type
     elif style == "gradient":
         emb, txt = apply_gradient_to_rgba(emblem, "diagonal"), mask_to_gradient(mask)
     else:
         emb, txt = emblem, mask_to_twist_depth(mask)
 
-    logo = compose(emb, txt)
-    # NO aggressive clean_alpha / haze scrub on flat — that ruined the look
+    logo = compose(emb, txt, crisp=(style == "flat"))
 
     # stable tag: UTM-HelvetIns style (spaces → hyphens)
     label = tag or font_path.stem.replace(" ", "-")

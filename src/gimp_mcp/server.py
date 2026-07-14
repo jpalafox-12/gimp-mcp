@@ -199,9 +199,19 @@ def gimp_fill_rect(
 def gimp_remove_background(
     image_id: str, mode: str = "black", threshold: int = 28, soft: int = 40
 ) -> str:
-    """Remove near-black or near-white background to transparency."""
+    """Remove background. mode=black|white|layer (layer=hard matte+defringe)."""
     return _j(get_backend().remove_background(image_id, mode, threshold, soft))
 
+
+@mcp.tool()
+def gimp_cutout(
+    image_id: str, thr: float = 40.0, hard: bool = True, defringe: bool = True
+) -> str:
+    """
+    Layered cutout for logos on black: color layer + matte layer + defringe.
+    Kills soft glow / white haze without muddy despeckle.
+    """
+    return _j(get_backend().cutout(image_id, thr, hard, defringe))
 
 @mcp.tool()
 def gimp_trim(
