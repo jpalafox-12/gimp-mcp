@@ -1,7 +1,7 @@
 # gimp-mcp
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
-[![Version](https://img.shields.io/badge/version-0.1.1-0E8A16.svg)](pyproject.toml)
+[![Version](https://img.shields.io/badge/version-0.2.0-0E8A16.svg)](pyproject.toml)
 [![MCP](https://img.shields.io/badge/MCP-Model%20Context%20Protocol-5319E7.svg)](https://modelcontextprotocol.io)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![MergeOS](https://img.shields.io/badge/MergeOS-bounties-5319E7.svg)](https://github.com/mergeos-bounties)
@@ -159,9 +159,19 @@ Plugin ships [`.mcp.json`](.mcp.json). Manual examples: [examples/claude_desktop
 | `gimp-mcp live-smoke` | Live console smoke (skips if missing) |
 | `gimp-mcp tools list` | MCP tool names |
 | `gimp-mcp call …` | One-shot tool (`key=value`) |
+| `gimp-mcp process <image>` | Full real-photo pipeline → multiple exports |
 | `gimp-mcp serve` | Stdio MCP server |
 
-MCP tools: `gimp_mode`, `gimp_doctor`, `gimp_seed_demo`, `gimp_list_images`, `gimp_new_image`, `gimp_open`, `gimp_info`, `gimp_resize`, `gimp_crop`, `gimp_flip`, `gimp_rotate`, `gimp_blur`, `gimp_desaturate`, `gimp_invert`, `gimp_text_overlay`, `gimp_export`, `gimp_batch_resize`.
+### Real photos
+
+```powershell
+$env:GIMP_MCP_MODE = "live"
+gimp-mcp process "C:\path\to\photo.jpg" --out-dir ".\examples\real-run" --watermark "MergeOS"
+```
+
+Writes `*_processed.png`, `*_gray.png`, `*_crop_flip_*.png`, and `batch_thumbs/` (GIMP 3 scale via python-fu-eval).
+
+MCP tools: `gimp_mode`, `gimp_doctor`, `gimp_seed_demo`, `gimp_list_images`, `gimp_close`, `gimp_new_image`, `gimp_open`, `gimp_info`, `gimp_resize`, `gimp_thumbnail`, `gimp_crop`, `gimp_flip`, `gimp_rotate`, `gimp_blur`, `gimp_sharpen`, `gimp_desaturate`, `gimp_invert`, `gimp_brightness`, `gimp_contrast`, `gimp_auto_orient`, `gimp_text_overlay`, `gimp_pipeline`, `gimp_export`, `gimp_batch_resize`.
 
 Env:
 

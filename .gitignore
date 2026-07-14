@@ -7,6 +7,7 @@ __pycache__/
 dist/
 build/
 .gimp-mcp/
+examples/real-run/
 
 _gimp_out.txt
 _gimp_err.txt

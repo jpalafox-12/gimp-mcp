@@ -91,9 +91,18 @@ Rules:
 | `gimp-mcp doctor` | Backend health |
 | `gimp-mcp demo` | Mock e2e |
 | `gimp-mcp live-smoke` | Live new → resize → export |
+| `gimp-mcp process <image>` | **Real-photo full pipeline** (thumb, sharpen, watermark, gray, crop, batch) |
 | `gimp-mcp tools list` | Tool names |
 | `gimp-mcp serve` | Stdio MCP server |
 | `gimp-mcp call <tool> key=value` | One-shot tool |
+
+### Real photo pipeline (preferred smoke)
+
+```powershell
+$env:GIMP_MCP_MODE = "live"
+gimp-mcp process "C:\Users\...\photo.jpg" --out-dir "D:\out\gimp-run" --watermark "MergeOS" --max-side 1280
+# Opens Explorer-friendly outputs: *_processed.png, *_gray.png, *_crop_flip_*, batch_thumbs/
+```
 
 Examples:
 
@@ -115,7 +124,7 @@ Helper (plugin / skill scripts):
 
 ## MCP tools
 
-`gimp_mode`, `gimp_doctor`, `gimp_seed_demo`, `gimp_list_images`, `gimp_new_image`, `gimp_open`, `gimp_info`, `gimp_resize`, `gimp_crop`, `gimp_flip`, `gimp_rotate`, `gimp_blur`, `gimp_desaturate`, `gimp_invert`, `gimp_text_overlay`, `gimp_export`, `gimp_batch_resize`.
+`gimp_mode`, `gimp_doctor`, `gimp_seed_demo`, `gimp_list_images`, `gimp_close`, `gimp_new_image`, `gimp_open`, `gimp_info`, `gimp_resize`, `gimp_thumbnail`, `gimp_crop`, `gimp_flip`, `gimp_rotate`, `gimp_blur`, `gimp_sharpen`, `gimp_desaturate`, `gimp_invert`, `gimp_brightness`, `gimp_contrast`, `gimp_auto_orient`, `gimp_text_overlay`, `gimp_pipeline`, `gimp_export`, `gimp_batch_resize`.
 
 Params: [references/tools-reference.md](references/tools-reference.md)  
 Recipes: [references/workflows.md](references/workflows.md)
